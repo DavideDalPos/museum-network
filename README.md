@@ -114,6 +114,19 @@ affiliation can enter `Private` rather than name an institution. If private
 contact information is ever needed, gather it through a separate, private
 channel — not through this pipeline.
 
+## Maintenance
+
+The only recurring upkeep is the GitHub access token the form uses to create
+issues. It's a fine-grained personal access token stored **only** in Netlify's
+environment variables as `GH_ISSUE_TOKEN`. If it was created with an expiry
+(e.g. one year), it must be renewed on that date or the form will start failing
+at submit. GitHub emails the account owner before a token expires, so keep that
+address current. To renew: generate a new fine-grained token (scope: this repo
+only, **Issues: Read and write**), then update the `GH_ISSUE_TOKEN` value in
+Netlify → Site configuration → Environment variables, and redeploy. Nothing in
+the repo, the function, or the form changes. Full steps are in
+[`SETUP-GUIDE.md`](./SETUP-GUIDE.md#maintenance--renewing-the-access-token).
+
 ## Setup
 
 To build this loop from scratch — or to hand it to someone else — see
