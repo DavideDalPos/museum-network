@@ -1,0 +1,73 @@
+name: Add approved associate to the network
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  add-associate:
+    if: github.event.label.name == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read record, geocode if needed, append
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          python3 - <<'PY'
+          import os, json, re, urllib.parse, urllib.request
+          from datetime import datetime, timezone
+
+          body = os.environ["ISSUE_BODY"]
+          m = re.search(r"```json\s*(\{.*?\})\s*```", body, re.S)
+          if not m:
+              raise SystemExit("No JSON block found in issue body")
+          rec = json.loads(m.group(1))
+
+          if rec.get("lat") is None or rec.get("lng") is None:
+              q = f"{rec['city']}, {rec['country']}"
+              url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+                  {"format": "json", "limit": 1, "q": q})
+              req = urllib.request.Request(url, headers={
+                  "User-Agent": "enns-museum-network/1.0 (YOUR-EMAIL@example.com)"})
+              try:
+                  geo = json.load(urllib.request.urlopen(req, timeout=20))
+                  if geo:
+                      rec["lat"] = float(geo[0]["lat"]); rec["lng"] = float(geo[0]["lon"])
+                      rec["coordSource"] = "geocoded"
+                  else:
+                      rec["lat"] = rec["lng"] = None; rec["coordSource"] = "none"
+              except Exception:
+                  rec["lat"] = rec["lng"] = None; rec["coordSource"] = "none"
+
+          rec["issue"] = int(os.environ["ISSUE_NUMBER"])
+          rec["addedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          path = "data/associates.json"
+          try:
+              with open(path) as fh: arr = json.load(fh)
+          except FileNotFoundError:
+              arr = []
+          arr.append(rec)
+          os.makedirs("data", exist_ok=True)
+          with open(path, "w") as fh: json.dump(arr, fh, indent=2, ensure_ascii=False)
+          print("Added:", json.dumps(rec, ensure_ascii=False))
+          PY
+
+      - name: Commit the new record
+        run: |
+          git config user.name  "museum-network-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/associates.json
+          git commit -m "Add associate from issue #${{ github.event.issue.number }}" || echo "No changes"
+          git push
+
+      - name: Close the issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue close ${{ github.event.issue.number }} --comment "Added to the map — thank you!"
