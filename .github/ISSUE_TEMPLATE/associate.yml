@@ -1,0 +1,79 @@
+name: Museum network — associate / visitor submission
+description: Submit your details to join the Enns Entomology Museum collaboration network.
+title: "Associate: "
+labels: ["associate-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for connecting with the **Enns Entomology Museum**.
+        Your submission will be reviewed before it appears on the collaboration map.
+        Please don't include private information — this issue will be public.
+
+  - type: input
+    id: first_name
+    attributes:
+      label: First name
+    validations:
+      required: true
+
+  - type: input
+    id: last_name
+    attributes:
+      label: Last name
+    validations:
+      required: true
+
+  - type: input
+    id: affiliation
+    attributes:
+      label: Affiliation / institution
+    validations:
+      required: true
+
+  - type: input
+    id: department
+    attributes:
+      label: Department (optional)
+
+  - type: input
+    id: pi
+    attributes:
+      label: PI / supervisor (optional)
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Relationship to the museum
+      options:
+        - Research associate
+        - Visitor
+        - Student / mentee
+        - Collaborator
+        - Friend of the museum
+    validations:
+      required: true
+
+  - type: input
+    id: city
+    attributes:
+      label: City
+    validations:
+      required: true
+
+  - type: input
+    id: country
+    attributes:
+      label: Country
+    validations:
+      required: true
+
+  - type: dropdown
+    id: show_on_map
+    attributes:
+      label: May we show you on the public collaboration map?
+      options:
+        - "Yes, show me on the public map"
+        - "No, keep me private (internal tracking only)"
+    validations:
+      required: true
