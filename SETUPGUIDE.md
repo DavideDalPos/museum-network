@@ -61,6 +61,9 @@ GitHub → your avatar → **Settings → Developer settings → Personal access
 - **Repository access:** *Only select repositories* → your repo.
 - **Permissions → Repository permissions → Issues: Read and write.** (That's the
   only permission needed.)
+- **Expiration:** your call. A shorter expiry is safer but must be renewed (see
+  [Maintenance](#maintenance--renewing-the-access-token)); because this token can
+  only create issues in one repo, a longer expiry is a reasonable trade-off.
 - Generate, and **copy the token once** — GitHub shows it a single time.
 
 ## Step 5 — Deploy the form to Netlify and store the token
@@ -373,6 +376,30 @@ can't commit the data file.
 Failure cues: no JSON block means the issue wasn't made by the function (someone
 opened a plain issue); `coordSource: none` means nothing resolved — fix the city
 and re-apply the label, or set the coordinates by hand.
+
+## Maintenance — renewing the access token
+
+The one recurring task is the PAT the Netlify function uses. If you gave it an
+expiry, it stops working on that date and the form fails at submit with a `401`
+from GitHub — not silently, so you'll notice. GitHub also emails the account
+owner a few days before expiry, so keep that address current.
+
+To renew (about two minutes):
+
+1. GitHub → **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**. Same scope as before: **this repo
+   only, Issues: Read and write.** Copy it once.
+2. Netlify → your site → **Site configuration → Environment variables →
+   `GH_ISSUE_TOKEN` → edit → paste the new value → Save.**
+3. Trigger a redeploy (Netlify → **Deploys → Trigger deploy**) so the function
+   picks up the new value.
+
+Nothing in the repo, the function code, or the form changes — only the env-var
+value. Because this token can do only one thing (create issues in this one repo),
+a longer or non-expiring token is a reasonable convenience-vs-risk trade if you'd
+rather not rotate on a schedule; the worst case if it leaked is issue spam in
+this repo, fixed by revoking. If you want zero rotation, a GitHub App uses
+auto-refreshing short-lived tokens instead, at the cost of more setup.
 
 ## Optional: manual fallback via a GitHub issue form
 
