@@ -14,7 +14,7 @@
   h1 { font-size:1.7rem; margin:0 0 .6rem; line-height:1.2; }
   p.lede { color:var(--muted); margin:0; font-size:1rem; }
   form { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:1.75rem; box-shadow:0 1px 2px rgba(0,0,0,.03); }
-  .field { margin-bottom:1.15rem; }
+  .field { margin-bottom:1.15rem; position:relative; }
   label { display:block; font-weight:600; font-size:.9rem; margin-bottom:.35rem; }
   .hint { font-weight:400; color:var(--muted); font-size:.82rem; }
   input, select { width:100%; padding:.65rem .7rem; font-size:.95rem; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--ink); font-family:inherit; }
@@ -29,6 +29,14 @@
   .status.ok { background:#e8f2ec; color:#254c37; border:1px solid #bcd9c8; }
   .status.err { background:#f6e7e7; color:#7a2a2a; border:1px solid #e0bcbc; }
   .hp { position:absolute; left:-9999px; }
+  .ac-list { list-style:none; margin:.25rem 0 0; padding:0; position:absolute; z-index:20; left:0; right:0;
+             background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 6px 18px rgba(0,0,0,.08);
+             max-height:230px; overflow-y:auto; }
+  .ac-list:empty { display:none; }
+  .ac-list li { padding:.55rem .7rem; font-size:.85rem; cursor:pointer; border-bottom:1px solid #f0f1ee; }
+  .ac-list li:last-child { border-bottom:0; }
+  .ac-list li:hover { background:#eef3ef; }
+  .pin { font-size:.78rem; color:var(--accent); margin-top:.3rem; min-height:1em; }
 </style>
 </head>
 <body>
@@ -41,15 +49,26 @@
 
   <form id="associate-form">
     <div class="hp" aria-hidden="true"><label>Company<input name="company" tabindex="-1" autocomplete="off" /></label></div>
+
     <div class="row">
       <div class="field"><label for="first_name">First name</label><input id="first_name" name="first_name" required /></div>
       <div class="field"><label for="last_name">Last name</label><input id="last_name" name="last_name" required /></div>
     </div>
-    <div class="field"><label for="affiliation">Affiliation / institution</label><input id="affiliation" name="affiliation" required placeholder="e.g. Museo di Storia Naturale di Venezia" /></div>
+
+    <div class="field">
+      <label for="affiliation">Affiliation / institution</label>
+      <input id="affiliation" name="affiliation" required autocomplete="off" placeholder="Start typing, then pick your institution…" />
+      <ul class="ac-list" id="affiliation-list"></ul>
+      <div class="pin" id="affiliation-pin"></div>
+      <input type="hidden" name="inst_lat" id="inst_lat" />
+      <input type="hidden" name="inst_lng" id="inst_lng" />
+    </div>
+
     <div class="row">
       <div class="field"><label for="department">Department <span class="hint">(optional)</span></label><input id="department" name="department" /></div>
       <div class="field"><label for="pi">PI / supervisor <span class="hint">(optional)</span></label><input id="pi" name="pi" /></div>
     </div>
+
     <div class="field">
       <label for="role">Relationship to the museum</label>
       <select id="role" name="role" required>
@@ -59,10 +78,19 @@
         <option>Friend of the museum</option>
       </select>
     </div>
+
     <div class="row">
-      <div class="field"><label for="city">City</label><input id="city" name="city" required placeholder="e.g. Venice" /></div>
-      <div class="field"><label for="country">Country</label><input id="country" name="country" required placeholder="e.g. Italy" /></div>
+      <div class="field">
+        <label for="city">City</label>
+        <input id="city" name="city" required autocomplete="off" placeholder="Start typing, then pick…" />
+        <ul class="ac-list" id="city-list"></ul>
+        <div class="pin" id="city-pin"></div>
+        <input type="hidden" name="city_lat" id="city_lat" />
+        <input type="hidden" name="city_lng" id="city_lng" />
+      </div>
+      <div class="field"><label for="country">Country</label><input id="country" name="country" required autocomplete="off" /></div>
     </div>
+
     <div class="field">
       <label for="show_on_map">May we show you on the public collaboration map?</label>
       <select id="show_on_map" name="show_on_map" required>
@@ -71,6 +99,7 @@
         <option>No, keep me private (internal tracking only)</option>
       </select>
     </div>
+
     <button type="submit" id="submit-btn">Submit</button>
     <p class="note">Please don't enter private information — submissions are stored in the museum's record.</p>
   </form>
@@ -82,15 +111,86 @@
   const form = document.getElementById("associate-form");
   const statusEl = document.getElementById("status");
   const btn = document.getElementById("submit-btn");
+  const cityInput = document.getElementById("city");
+  const countryInput = document.getElementById("country");
+
+  // Reusable Nominatim autocomplete. Debounced + min length to respect usage limits.
+  function setupAutocomplete({ inputId, listId, latId, lngId, pinId, onPick }) {
+    const input = document.getElementById(inputId);
+    const list  = document.getElementById(listId);
+    const latEl = document.getElementById(latId);
+    const lngEl = document.getElementById(lngId);
+    const pin   = document.getElementById(pinId);
+    let timer, last = "";
+
+    function clearCoords() { latEl.value = ""; lngEl.value = ""; pin.textContent = ""; }
+
+    input.addEventListener("input", () => {
+      clearCoords();                      // typing invalidates a previous pick
+      const q = input.value.trim();
+      clearTimeout(timer);
+      if (q.length < 3) { list.innerHTML = ""; return; }
+      timer = setTimeout(() => search(q), 500);
+    });
+
+    async function search(q) {
+      if (q === last) return; last = q;
+      try {
+        const url = "https://nominatim.openstreetmap.org/search?" +
+          new URLSearchParams({ q, format: "json", limit: "5", addressdetails: "1" });
+        const res = await fetch(url, { headers: { "Accept": "application/json" } });
+        render(await res.json());
+      } catch { list.innerHTML = ""; }
+    }
+
+    function render(results) {
+      list.innerHTML = "";
+      (results || []).forEach(r => {
+        const li = document.createElement("li");
+        li.textContent = r.display_name;
+        li.addEventListener("mousedown", (e) => {   // mousedown beats blur
+          e.preventDefault();
+          latEl.value = r.lat; lngEl.value = r.lon;
+          pin.textContent = "📍 location attached";
+          list.innerHTML = "";
+          if (onPick) onPick(r);
+        });
+        list.appendChild(li);
+      });
+    }
+
+    input.addEventListener("blur", () => setTimeout(() => { list.innerHTML = ""; }, 150));
+  }
+
+  setupAutocomplete({
+    inputId: "affiliation", listId: "affiliation-list",
+    latId: "inst_lat", lngId: "inst_lng", pinId: "affiliation-pin",
+    onPick: (r) => {                                   // fill city/country if empty
+      const a = r.address || {};
+      const city = a.city || a.town || a.village || a.municipality || a.county;
+      if (city && !cityInput.value) cityInput.value = city;
+      if (a.country && !countryInput.value) countryInput.value = a.country;
+    }
+  });
+
+  setupAutocomplete({
+    inputId: "city", listId: "city-list",
+    latId: "city_lat", lngId: "city_lng", pinId: "city-pin",
+    onPick: (r) => { const a = r.address || {}; if (a.country) countryInput.value = a.country; }
+  });
 
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(form).entries());
+    // Priority: institution coordinates, else city coordinates, else none (Action geocodes).
+    data.lat = data.inst_lat || data.city_lat || "";
+    data.lng = data.inst_lng || data.city_lng || "";
+    data.coord_source = data.inst_lat ? "institution" : (data.city_lat ? "city" : "none");
+
     btn.disabled = true; btn.textContent = "Submitting…"; statusEl.className = "";
     try {
       const resp = await fetch("/.netlify/functions/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data)
       });
       const result = await resp.json();
