@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Enns Entomology Museum — Join the Network</title>
+<style>
+  :root {
+    --ink: #1f2421; --muted: #5b6660; --line: #d9ddd7;
+    --accent: #3f6b4c; --accent-dark: #2f5039; --bg: #f6f7f4; --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--ink); background: var(--bg); line-height: 1.5; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+  header { margin-bottom: 2rem; }
+  .kicker { text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; color: var(--accent); font-weight: 600; margin: 0 0 .5rem; }
+  h1 { font-size: 1.7rem; margin: 0 0 .6rem; line-height: 1.2; }
+  p.lede { color: var(--muted); margin: 0; font-size: 1rem; }
+  form { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.75rem; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+  .field { margin-bottom: 1.15rem; }
+  label { display: block; font-weight: 600; font-size: .9rem; margin-bottom: .35rem; }
+  .hint { font-weight: 400; color: var(--muted); font-size: .82rem; }
+  input, select { width: 100%; padding: .65rem .7rem; font-size: .95rem; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink); font-family: inherit; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 480px) { .row { grid-template-columns: 1fr; } }
+  button { width: 100%; margin-top: .5rem; padding: .8rem 1rem; font-size: 1rem; font-weight: 600; color: #fff; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer; }
+  button:hover { background: var(--accent-dark); }
+  .note { margin-top: 1.25rem; font-size: .82rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 1rem; }
+  .note strong { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="kicker">Enns Entomology Museum · University of Missouri</p>
+    <h1>Join the museum collaboration network</h1>
+    <p class="lede">Research associates, visitors, students, and friends of the museum — add your details below. When you submit, you'll be sent to GitHub to confirm your entry (a free GitHub account is required). Entries appear on the map after review.</p>
+  </header>
+
+  <form id="associate-form">
+    <div class="row">
+      <div class="field"><label for="first_name">First name</label><input id="first_name" name="first_name" required /></div>
+      <div class="field"><label for="last_name">Last name</label><input id="last_name" name="last_name" required /></div>
+    </div>
+    <div class="field"><label for="affiliation">Affiliation / institution</label><input id="affiliation" name="affiliation" required placeholder="e.g. Museo di Storia Naturale di Venezia" /></div>
+    <div class="row">
+      <div class="field"><label for="department">Department <span class="hint">(optional)</span></label><input id="department" name="department" /></div>
+      <div class="field"><label for="pi">PI / supervisor <span class="hint">(optional)</span></label><input id="pi" name="pi" /></div>
+    </div>
+    <div class="field">
+      <label for="role">Relationship to the museum</label>
+      <select id="role" name="role" required>
+        <option value="" disabled selected>Choose one…</option>
+        <option>Research associate</option>
+        <option>Visitor</option>
+        <option>Student / mentee</option>
+        <option>Collaborator</option>
+        <option>Friend of the museum</option>
+      </select>
+    </div>
+    <div class="row">
+      <div class="field"><label for="city">City</label><input id="city" name="city" required placeholder="e.g. Venice" /></div>
+      <div class="field"><label for="country">Country</label><input id="country" name="country" required placeholder="e.g. Italy" /></div>
+    </div>
+    <div class="field">
+      <label for="show_on_map">May we show you on the public collaboration map?</label>
+      <select id="show_on_map" name="show_on_map" required>
+        <option value="" disabled selected>Choose one…</option>
+        <option>Yes, show me on the public map</option>
+        <option>No, keep me private (internal tracking only)</option>
+      </select>
+    </div>
+    <button type="submit">Continue to GitHub →</button>
+    <p class="note"><strong>What happens next:</strong> we send you to GitHub with your details pre-filled as a new issue. Review them, click <em>Submit new issue</em>, and you're done. Please don't put private information here — issues in this repository are public.</p>
+  </form>
+</div>
+
+<script>
+  const GITHUB_OWNER = "DavideDalPos";
+  const GITHUB_REPO  = "museum-network";
+
+  const form = document.getElementById("associate-form");
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(form).entries());
+    const params = new URLSearchParams({
+      template: "associate.yml",
+      labels: "associate-submission",
+      title: `Associate: ${data.first_name} ${data.last_name}`,
+      first_name: data.first_name,
+      last_name: data.last_name,
+      affiliation: data.affiliation,
+      department: data.department || "",
+      pi: data.pi || "",
+      role: data.role,
+      city: data.city,
+      country: data.country,
+      show_on_map: data.show_on_map
+    });
+    window.location.href = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/issues/new?${params.toString()}`;
+  });
+</script>
+</body>
+</html>
