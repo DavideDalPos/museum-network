@@ -5,7 +5,7 @@ exports.handler = async (event) => {
   try { data = JSON.parse(event.body || "{}"); }
   catch { return { statusCode: 400, body: JSON.stringify({ ok:false, error:"Invalid data" }) }; }
 
-  // Honeypot — bots fill this hidden field; humans never see it.
+  // Honeypot
   if (data.company) return { statusCode: 200, body: JSON.stringify({ ok:true }) };
 
   const required = ["first_name","last_name","affiliation","role","city","country","show_on_map"];
@@ -17,6 +17,11 @@ exports.handler = async (event) => {
   const token = process.env.GH_ISSUE_TOKEN;
   if (!token) return { statusCode: 500, body: JSON.stringify({ ok:false, error:"Server not configured" }) };
 
+  // Coordinates chosen by the form (institution first, then city). May be absent.
+  const lat = parseFloat(data.lat);
+  const lng = parseFloat(data.lng);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+
   const record = {
     firstName: data.first_name.trim(),
     lastName: data.last_name.trim(),
@@ -26,7 +31,10 @@ exports.handler = async (event) => {
     role: data.role.trim(),
     city: data.city.trim(),
     country: data.country.trim(),
-    showOnMap: /^Yes/i.test(data.show_on_map)
+    showOnMap: /^Yes/i.test(data.show_on_map),
+    lat: hasCoords ? lat : null,
+    lng: hasCoords ? lng : null,
+    coordSource: hasCoords ? (data.coord_source || "form") : "none"
   };
 
   const body = [
@@ -36,6 +44,8 @@ exports.handler = async (event) => {
     record.pi ? `**PI / supervisor:** ${record.pi}` : null,
     `**Relationship:** ${record.role}`,
     `**Location:** ${record.city}, ${record.country}`,
+    hasCoords ? `**Coordinates:** ${lat}, ${lng} (from ${record.coordSource})`
+              : `**Coordinates:** not provided — will be geocoded on approval`,
     `**Show on public map:** ${record.showOnMap ? "Yes" : "No"}`,
     ``,
     `<!-- machine-readable; do not edit -->`,
