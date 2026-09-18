@@ -7,7 +7,9 @@ It's written to be reusable — swap the field names and it works for any
 **The idea:** a static form posts to a Netlify serverless function; the function
 opens a GitHub issue using a private token; a reviewer approves the issue with a
 label; a GitHub Action converts approved issues into a JSON data file. No
-database, no server to run, and one review gate you control.
+database, no server to run, and one review gate you control. The form also
+attaches map coordinates as the person types, so most entries need no geocoding
+at all.
 
 ---
 
@@ -40,7 +42,7 @@ Create `data/associates.json` containing an empty array:
 []
 ```
 
-This is what the map will read, and what the Action appends to.
+This is what the map reads, and what the Action appends to.
 
 ## Step 3 — Create the labels
 
@@ -75,9 +77,9 @@ The token now lives only on Netlify's servers, where the function can read it.
 ## Step 6 — Add the serverless function
 
 Create `netlify/functions/submit.js`. It validates the submission, drops obvious
-bots (honeypot), and opens a GitHub issue whose body carries a machine-readable
-JSON block that the Action will read later. **Replace the `repos/OWNER/REPO`
-path** with your own.
+bots (honeypot), reads the coordinates the form captured, and opens a GitHub
+issue whose body carries a machine-readable JSON block for the Action to read.
+**Replace the `repos/OWNER/REPO` path** with your own.
 
 ```js
 exports.handler = async (event) => {
@@ -99,6 +101,11 @@ exports.handler = async (event) => {
   const token = process.env.GH_ISSUE_TOKEN;
   if (!token) return { statusCode: 500, body: JSON.stringify({ ok:false, error:"Server not configured" }) };
 
+  // Coordinates chosen by the form (institution first, then city). May be absent.
+  const lat = parseFloat(data.lat);
+  const lng = parseFloat(data.lng);
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+
   const record = {
     firstName: data.first_name.trim(),
     lastName: data.last_name.trim(),
@@ -108,7 +115,10 @@ exports.handler = async (event) => {
     role: data.role.trim(),
     city: data.city.trim(),
     country: data.country.trim(),
-    showOnMap: /^Yes/i.test(data.show_on_map)
+    showOnMap: /^Yes/i.test(data.show_on_map),
+    lat: hasCoords ? lat : null,
+    lng: hasCoords ? lng : null,
+    coordSource: hasCoords ? (data.coord_source || "form") : "none"
   };
 
   const body = [
@@ -118,6 +128,8 @@ exports.handler = async (event) => {
     record.pi ? `**PI / supervisor:** ${record.pi}` : null,
     `**Relationship:** ${record.role}`,
     `**Location:** ${record.city}, ${record.country}`,
+    hasCoords ? `**Coordinates:** ${lat}, ${lng} (from ${record.coordSource})`
+              : `**Coordinates:** not provided — will be geocoded on approval`,
     `**Show on public map:** ${record.showOnMap ? "Yes" : "No"}`,
     ``,
     `<!-- machine-readable; do not edit -->`,
@@ -147,58 +159,125 @@ exports.handler = async (event) => {
 };
 ```
 
-## Step 7 — The form posts to the function
+## Step 7 — The form, with autocomplete
 
-The form (`index.html`) submits with `fetch` to `/.netlify/functions/submit`
-and shows a thank-you in place — no redirect, no GitHub account. The essential
-part is the script; style it however you like.
+The full styled page is `index.html`. The parts that matter for this loop are
+below. Two fields (institution and city) autocomplete against
+[Nominatim](https://nominatim.openstreetmap.org) — free, no API key — and stash
+the chosen coordinates in hidden fields. On submit, the form sends **institution
+coordinates if present, else city coordinates, else none**, and posts to the
+function with `fetch` (no redirect).
+
+Key markup — each autocompleting field pairs a text input with a list and two
+hidden coordinate inputs:
 
 ```html
-<form id="f">
-  <!-- honeypot: keep it visually hidden with CSS -->
-  <input name="company" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" />
-  <input name="first_name" required /> <input name="last_name" required />
-  <input name="affiliation" required />
-  <input name="department" /> <input name="pi" />
-  <select name="role" required>…</select>
-  <input name="city" required /> <input name="country" required />
-  <select name="show_on_map" required>…</select>
-  <button type="submit">Submit</button>
-</form>
-<div id="status" aria-live="polite"></div>
+<!-- honeypot, hidden with CSS -->
+<input name="company" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" />
 
-<script>
-  const form = document.getElementById("f");
-  const statusEl = document.getElementById("status");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(form).entries());
-    try {
-      const resp = await fetch("/.netlify/functions/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
-      });
-      const result = await resp.json();
-      if (resp.ok && result.ok) {
-        form.style.display = "none";
-        statusEl.textContent = "Thank you! You'll appear on the map after review.";
-      } else { throw new Error(result.error || "Submission failed"); }
-    } catch (err) {
-      statusEl.textContent = "Something went wrong: " + err.message;
-    }
-  });
-</script>
+<label>Affiliation / institution — no institution? just type "Private"</label>
+<input id="affiliation" name="affiliation" required autocomplete="off" />
+<ul class="ac-list" id="affiliation-list"></ul>
+<input type="hidden" name="inst_lat" id="inst_lat" />
+<input type="hidden" name="inst_lng" id="inst_lng" />
+
+<input id="city" name="city" required autocomplete="off" />
+<ul class="ac-list" id="city-list"></ul>
+<input type="hidden" name="city_lat" id="city_lat" />
+<input type="hidden" name="city_lng" id="city_lng" />
+
+<input id="country" name="country" required autocomplete="off" />
 ```
 
-The form field `name`s must match the `required` list in the function.
+Key script — a reusable autocomplete, plus the submit handler that sets the
+coordinate priority:
+
+```js
+const skipWords = ["private","independent","none","n/a","na","unaffiliated"];
+
+function setupAutocomplete({ inputId, listId, latId, lngId, allowSkip, onPick }) {
+  const input = document.getElementById(inputId);
+  const list  = document.getElementById(listId);
+  const latEl = document.getElementById(latId);
+  const lngEl = document.getElementById(lngId);
+  let timer, last = "";
+  const clearCoords = () => { latEl.value = ""; lngEl.value = ""; };
+
+  input.addEventListener("input", () => {
+    clearCoords();                                   // typing invalidates a pick
+    const q = input.value.trim();
+    clearTimeout(timer);
+    if (allowSkip && skipWords.includes(q.toLowerCase())) { list.innerHTML = ""; return; }
+    if (q.length < 3) { list.innerHTML = ""; return; }
+    timer = setTimeout(() => search(q), 500);        // debounce for usage limits
+  });
+
+  async function search(q) {
+    if (q === last) return; last = q;
+    const url = "https://nominatim.openstreetmap.org/search?" +
+      new URLSearchParams({ q, format: "json", limit: "5", addressdetails: "1" });
+    try { render(await (await fetch(url)).json()); } catch { list.innerHTML = ""; }
+  }
+
+  function render(results) {
+    list.innerHTML = "";
+    (results || []).forEach(r => {
+      const li = document.createElement("li");
+      li.textContent = r.display_name;
+      li.addEventListener("mousedown", (e) => {      // mousedown beats blur
+        e.preventDefault();
+        latEl.value = r.lat; lngEl.value = r.lon;
+        list.innerHTML = "";
+        if (onPick) onPick(r);
+      });
+      list.appendChild(li);
+    });
+  }
+  input.addEventListener("blur", () => setTimeout(() => { list.innerHTML = ""; }, 150));
+}
+
+const cityInput = document.getElementById("city");
+const countryInput = document.getElementById("country");
+
+setupAutocomplete({ inputId:"affiliation", listId:"affiliation-list",
+  latId:"inst_lat", lngId:"inst_lng", allowSkip:true,
+  onPick: r => { const a = r.address || {};
+    const city = a.city || a.town || a.village || a.municipality || a.county;
+    if (city && !cityInput.value) cityInput.value = city;
+    if (a.country && !countryInput.value) countryInput.value = a.country; } });
+
+setupAutocomplete({ inputId:"city", listId:"city-list",
+  latId:"city_lat", lngId:"city_lng", allowSkip:false,
+  onPick: r => { const a = r.address || {}; if (a.country) countryInput.value = a.country; } });
+
+document.getElementById("associate-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const data = Object.fromEntries(new FormData(form).entries());
+  data.lat = data.inst_lat || data.city_lat || "";                        // institution first
+  data.lng = data.inst_lng || data.city_lng || "";
+  data.coord_source = data.inst_lat ? "institution" : (data.city_lat ? "city" : "none");
+
+  const resp = await fetch("/.netlify/functions/submit", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  });
+  const result = await resp.json();
+  // ...show a thank-you on success, an error message otherwise...
+});
+```
+
+The form field `name`s must match the `required` list in the function. Someone
+with no institution types `Private`, which the `skipWords` list keeps from
+firing a pointless lookup; their point then comes from the City field.
 
 ## Step 8 — The Action that publishes approved submissions
 
 Create `.github/workflows/add-associate.yml`. It fires when the `approved` label
-is added, extracts the JSON block from the issue, geocodes `City, Country`, and
-appends the record. **Put a real contact email in the Nominatim User-Agent** —
-their usage policy requires one.
+is added, reads the JSON block from the issue, **keeps the coordinates the form
+supplied**, and only geocodes `City, Country` as a fallback when they're missing.
+**Put a real contact email in the Nominatim User-Agent** — their usage policy
+requires one.
 
 ```yaml
 name: Add approved associate to the network
@@ -217,13 +296,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract, geocode, and append
+      - name: Read record, geocode if needed, append
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           python3 - <<'PY'
           import os, json, re, urllib.parse, urllib.request
+          from datetime import datetime, timezone
 
           body = os.environ["ISSUE_BODY"]
           m = re.search(r"```json\s*(\{.*?\})\s*```", body, re.S)
@@ -231,20 +311,24 @@ jobs:
               raise SystemExit("No JSON block found in issue body")
           rec = json.loads(m.group(1))
 
-          q = f"{rec['city']}, {rec['country']}"
-          url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
-              {"format": "json", "limit": 1, "q": q})
-          req = urllib.request.Request(url, headers={
-              "User-Agent": "enns-museum-network/1.0 (YOUR-EMAIL@example.com)"})
-          try:
-              geo = json.load(urllib.request.urlopen(req, timeout=20))
-              rec["lat"] = float(geo[0]["lat"]) if geo else None
-              rec["lng"] = float(geo[0]["lon"]) if geo else None
-          except Exception:
-              rec["lat"] = rec["lng"] = None
+          # Keep the form's coordinates; geocode only when they're missing.
+          if rec.get("lat") is None or rec.get("lng") is None:
+              q = f"{rec['city']}, {rec['country']}"
+              url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+                  {"format": "json", "limit": 1, "q": q})
+              req = urllib.request.Request(url, headers={
+                  "User-Agent": "enns-museum-network/1.0 (YOUR-EMAIL@example.com)"})
+              try:
+                  geo = json.load(urllib.request.urlopen(req, timeout=20))
+                  if geo:
+                      rec["lat"] = float(geo[0]["lat"]); rec["lng"] = float(geo[0]["lon"])
+                      rec["coordSource"] = "geocoded"
+                  else:
+                      rec["lat"] = rec["lng"] = None; rec["coordSource"] = "none"
+              except Exception:
+                  rec["lat"] = rec["lng"] = None; rec["coordSource"] = "none"
 
           rec["issue"] = int(os.environ["ISSUE_NUMBER"])
-          from datetime import datetime, timezone
           rec["addedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
           path = "data/associates.json"
@@ -278,25 +362,25 @@ can't commit the data file.
 
 ## Step 9 — Test the whole loop
 
-1. Open your Netlify form, fill it in, and submit. You should get the thank-you
-   message, and a new issue should appear under **Issues**.
-2. Add the **`approved`** label to that issue.
-3. Watch the **Actions** tab: the workflow runs, commits to
-   `data/associates.json`, and closes the issue.
-4. Open `data/associates.json` — your record is there, with `lat`/`lng` filled.
+1. Open your Netlify form. Type an institution and **pick a suggestion** (you'll
+   see the location attach); do the same for city if you like. Submit.
+2. A new issue appears under **Issues**, with a **Coordinates** line and a JSON
+   block containing `lat`, `lng`, and `coordSource`.
+3. Add the **`approved`** label. Watch the **Actions** tab: the workflow runs,
+   commits to `data/associates.json`, and closes the issue.
+4. Open `data/associates.json` — your record is there, coordinates and all.
 
-If the Action can't find a JSON block, the submission didn't come through the
-function (someone opened a plain issue). If `lat`/`lng` are `null`, the place
-name didn't geocode — correct it and re-apply the label.
+Failure cues: no JSON block means the issue wasn't made by the function (someone
+opened a plain issue); `coordSource: none` means nothing resolved — fix the city
+and re-apply the label, or set the coordinates by hand.
 
 ## Optional: manual fallback via a GitHub issue form
 
-If you also want people *with* GitHub accounts to be able to submit directly on
-GitHub, add a YAML issue form at `.github/ISSUE_TEMPLATE/associate.yml` with the
-same fields. Give each field an `id`; those ids can even be pre-filled from a URL
-(`.../issues/new?template=associate.yml&city=Padua`). Note that issues created
-this way won't contain the JSON block, so either keep the function as the primary
-path or extend the Action to parse issue-form fields as well.
+If you also want people *with* GitHub accounts to submit directly on GitHub, add
+a YAML issue form at `.github/ISSUE_TEMPLATE/associate.yml` with the same fields
+(give each an `id`; ids can be pre-filled from a URL like
+`.../issues/new?template=associate.yml&city=Padua`). Issues created this way have
+no JSON block and no coordinates, so the Action's geocoding fallback handles them.
 
 ---
 
@@ -304,7 +388,7 @@ path or extend the Action to parse issue-form fields as well.
 
 | Thing | Location |
 | --- | --- |
-| Form page | `index.html`, served by Netlify |
+| Form page (with autocomplete) | `index.html`, served by Netlify |
 | Serverless function | `netlify/functions/submit.js` |
 | PAT (Issues: read/write) | Netlify env var `GH_ISSUE_TOKEN` — nowhere else |
 | Review gate | the `approved` label |
