@@ -114,8 +114,11 @@
   const cityInput = document.getElementById("city");
   const countryInput = document.getElementById("country");
 
+  // Words that mean "no institution" — don't trigger a location lookup for these.
+  const skipWords = ["private","independent","none","n/a","na","unaffiliated"];
+
   // Reusable Nominatim autocomplete. Debounced + min length to respect usage limits.
-  function setupAutocomplete({ inputId, listId, latId, lngId, pinId, onPick }) {
+  function setupAutocomplete({ inputId, listId, latId, lngId, pinId, allowSkip, onPick }) {
     const input = document.getElementById(inputId);
     const list  = document.getElementById(listId);
     const latEl = document.getElementById(latId);
@@ -129,6 +132,7 @@
       clearCoords();                      // typing invalidates a previous pick
       const q = input.value.trim();
       clearTimeout(timer);
+      if (allowSkip && skipWords.includes(q.toLowerCase())) { list.innerHTML = ""; return; }
       if (q.length < 3) { list.innerHTML = ""; return; }
       timer = setTimeout(() => search(q), 500);
     });
@@ -165,6 +169,7 @@
   setupAutocomplete({
     inputId: "affiliation", listId: "affiliation-list",
     latId: "inst_lat", lngId: "inst_lng", pinId: "affiliation-pin",
+    allowSkip: true,                                   // "Private" etc. won't trigger lookups
     onPick: (r) => {                                   // fill city/country if empty
       const a = r.address || {};
       const city = a.city || a.town || a.village || a.municipality || a.county;
@@ -176,6 +181,7 @@
   setupAutocomplete({
     inputId: "city", listId: "city-list",
     latId: "city_lat", lngId: "city_lng", pinId: "city-pin",
+    allowSkip: false,
     onPick: (r) => { const a = r.address || {}; if (a.country) countryInput.value = a.country; }
   });
 
