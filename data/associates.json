@@ -1,18 +1,1 @@
-[
-  {
-    "firstName": "Davide",
-    "lastName": "Dal Pos",
-    "affiliation": "University of Missouri",
-    "department": "",
-    "pi": "",
-    "role": "Research associate",
-    "city": "Columbia",
-    "country": "United States",
-    "showOnMap": true,
-    "lat": 38.9364147,
-    "lng": -92.329703,
-    "coordSource": "institution",
-    "issue": 7,
-    "addedAt": "2026-09-18T22:15:36Z"
-  }
-]
+[]
